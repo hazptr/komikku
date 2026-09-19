@@ -15,6 +15,8 @@ class DownloadPreferences(
 
     fun splitTallImages() = preferenceStore.getBoolean("split_tall_images", true)
 
+    fun downloadBgm() = preferenceStore.getBoolean("download_bgm", true)
+
     fun autoDownloadWhileReading() = preferenceStore.getInt("auto_download_while_reading", 0)
 
     fun removeAfterReadSlots() = preferenceStore.getInt("remove_after_read_slots", -1)
