@@ -5,6 +5,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.model.getComicInfo
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.tachiyomi.data.cache.BgmCache
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.library.LibraryUpdateNotifier
@@ -12,6 +13,7 @@ import eu.kanade.tachiyomi.data.notification.NotificationHandler
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
@@ -43,6 +45,8 @@ import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import mihon.core.archive.CbzCrypto
 import mihon.core.archive.ZipWriter
@@ -83,8 +87,11 @@ class Downloader(
     private val chapterCache: ChapterCache = Injekt.get(),
     private val downloadPreferences: DownloadPreferences = Injekt.get(),
     private val xml: XML = Injekt.get(),
+    private val json: Json = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
     private val getTracks: GetTracks = Injekt.get(),
+    private val bgmCache: BgmCache = Injekt.get(),
+    private val readerPreferences: ReaderPreferences = Injekt.get(),
     // SY -->
     private val sourcePreferences: SourcePreferences = Injekt.get(),
     // SY <--
@@ -382,7 +389,9 @@ class Downloader(
                     throw Exception(context.stringResource(MR.strings.page_list_empty_error))
                 }
                 // Don't trust index from source
-                val reIndexedPages = pages.mapIndexed { index, page -> Page(index, page.url, page.imageUrl, page.uri) }
+                val reIndexedPages = pages.mapIndexed { index, page ->
+                    Page(index, page.url, page.imageUrl, page.uri).also(page::copySourceDataInto)
+                }
                 download.pages = reIndexedPages
                 reIndexedPages
             }
@@ -436,6 +445,7 @@ class Downloader(
                 download.chapter,
                 download.source,
             )
+            downloadChapterAudio(tmpDir, download, pageList)
 
             // Only rename the directory if it's downloaded
             if (downloadPreferences.saveChaptersAsCBZ().get()) {
@@ -553,6 +563,107 @@ class Downloader(
     }
 
     /**
+     * Downloads the chapter's background music, if the source attached any, and writes a
+     * [BgmInfo] sidecar mapping each downloaded image file to the track that plays over it.
+     *
+     * A track that fails to download is logged and skipped rather than propagated: music is
+     * secondary to the pages, and losing it must never fail an otherwise-complete chapter.
+     *
+     * @param tmpDir the temporary directory of the download.
+     * @param download the download the pages belong to.
+     * @param pageList the chapter's page list.
+     */
+    private suspend fun downloadChapterAudio(tmpDir: UniFile, download: Download, pageList: List<Page>) {
+        // Checked first, before any network I/O: a user with audio off must not pay for track
+        // downloads they will never hear.
+        // Two separate questions: whether the reader plays audio at all, and whether it is
+        // worth the extra bytes in a download. Tracks add roughly a fifth to a chapter.
+        if (!readerPreferences.bgmEnabled().get() || !downloadPreferences.downloadBgm().get()) return
+
+        val chapterAudio = pageList.firstNotNullOfOrNull { it.chapterAudio } ?: return
+        if (chapterAudio.tracks.isEmpty()) return
+
+        val source = download.source
+        val files = mutableMapOf<String, String>()
+        for (track in chapterAudio.tracks) {
+            // Content-addressed rather than positional: download.pages is null after a restart
+            // and gets re-fetched, so track order is not stable across retries. Naming by ordinal
+            // would relabel a file that is already on disk out from under a sidecar that still
+            // points at it under its old name.
+            val filename = BGM_FILE_PREFIX + DiskUtil.hashKeyForDisk(track.id)
+
+            // tmpDir is reused across retries; a track already stored from a previous attempt
+            // shouldn't be re-fetched
+            if (tmpDir.findFile(filename) != null) {
+                files[track.id] = filename
+                continue
+            }
+
+            // Fetched through the shared cache, not a bespoke network call, so a track the reader
+            // already previewed online is not downloaded a second time here.
+            val cachedTrack = bgmCache.fetch(track, source) ?: continue
+            try {
+                val tmpFile = tmpDir.createFile("$filename.tmp")!!
+                try {
+                    cachedTrack.inputStream().use { input ->
+                        tmpFile.openOutputStream().use { output -> input.copyTo(output) }
+                    }
+                } catch (e: Exception) {
+                    tmpFile.delete()
+                    throw e
+                }
+                tmpFile.renameTo(filename)
+                files[track.id] = filename
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                // Best-effort: log and move on, a dead track must not sink the whole chapter
+                logcat(LogPriority.WARN, e) { "[BGM] failed to store track ${track.id}" }
+            }
+        }
+
+        // Nothing made it to disk, so there's nothing worth describing
+        if (files.isEmpty()) return
+
+        // Guarded end to end: downloadChapter turns any escaping throwable into Download.State.ERROR,
+        // and a chapter with every page already on disk must not be marked failed just because its
+        // sidecar could not be built or written.
+        try {
+            // Excluded up front rather than left for isImage() to reject: ComicInfo.xml and the
+            // track files above are always present by now, and isImage() opens a stream to sniff
+            // the header, which used to throw for at least one of them and marked an otherwise
+            // fully downloaded chapter as errored.
+            val knownNonImages = setOf(COMIC_INFO_FILE, BGM_INFO_FILE, NOMEDIA_FILE) + files.values
+            val imageFiles = tmpDir.listFiles().orEmpty()
+                .filter { file ->
+                    val name = file.name.orEmpty()
+                    file.isFile && name !in knownNonImages && !name.endsWith(".tmp") &&
+                        ImageUtil.isImage(name) { file.openInputStream() }
+                }
+
+            // Cued by the source page each file was produced from, not by position: a tall image
+            // splits into several files sharing one numeric prefix, and all of them inherit that
+            // page's track.
+            val cues = imageFiles.mapNotNull { file ->
+                val name = file.name.orEmpty()
+                val pageIndex = name.takeWhile(Char::isDigit).toIntOrNull()?.minus(1)
+                    ?: return@mapNotNull null
+                val trackId = chapterAudio.trackAt(pageIndex)?.id?.takeIf { it in files }
+                    ?: return@mapNotNull null
+                name to trackId
+            }.toMap()
+
+            if (cues.isEmpty()) return
+
+            tmpDir.createFile(BGM_INFO_FILE)!!.openOutputStream().use {
+                it.write(json.encodeToString(BgmInfo(files = files, cues = cues)).toByteArray())
+            }
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            logcat(LogPriority.WARN, e) { "[BGM] failed to write $BGM_INFO_FILE" }
+        }
+    }
+
+    /**
      * Copies the image from cache to file in tmpDir.
      *
      * @param cacheFile the file from cache.
@@ -629,6 +740,9 @@ class Downloader(
             when {
                 fileName in listOf(COMIC_INFO_FILE, NOMEDIA_FILE) -> false
                 fileName.endsWith(".tmp") -> false
+                // BGM files are written after this check, but tmpDir is reused across retries, so a
+                // stale sidecar/track from a previous run must not inflate the count either
+                fileName == BGM_INFO_FILE || fileName.startsWith(BGM_FILE_PREFIX) -> false
                 // Only count the first split page and not the others
                 fileName.contains("__") && !fileName.endsWith("__001.jpg") -> false
                 else -> true

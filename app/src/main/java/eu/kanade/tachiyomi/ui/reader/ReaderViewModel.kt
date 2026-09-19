@@ -43,6 +43,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
 import eu.kanade.tachiyomi.util.chapter.filterDownloaded
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
@@ -349,6 +350,11 @@ class ReaderViewModel @JvmOverloads constructor(
     private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading().get()
 
     init {
+        readerPreferences.bgmEnabled().changes()
+            .drop(1)
+            .onEach { lastBgmPage?.let(::onBgmPageChanged) }
+            .launchIn(viewModelScope)
+
         // To save state
         state.map { it.viewerChapters?.currChapter }
             .distinctUntilChanged()
@@ -386,7 +392,56 @@ class ReaderViewModel @JvmOverloads constructor(
         // SY <--
     }
 
+    /** Plays source-provided background music. */
+    val bgmPlayer = ChapterBgmPlayer(viewModelScope, Injekt.get())
+
+    /**
+     * Last page reported to [bgmPlayer], so flipping the preference can take effect where the
+     * reader already is instead of waiting for the next page change.
+     */
+    private var lastBgmPage: ReaderPage? = null
+    private var loggedAudioForChapter: Long? = null
+
+    /** One line per chapter: without it, a chapter that simply has no cues is indistinguishable
+     *  from a chapter whose audio failed to resolve. */
+    private fun logChapterAudio(page: ReaderPage) {
+        val chapterId = page.chapter.chapter.id
+        if (chapterId == loggedAudioForChapter) return
+        loggedAudioForChapter = chapterId
+        val audio = page.chapter.pages?.firstNotNullOfOrNull { it.chapterAudio }
+        logcat {
+            if (audio == null) {
+                "[BGM] no audio for ${page.chapter.chapter.name}"
+            } else {
+                "[BGM] ${page.chapter.chapter.name}: ${audio.tracks.size} tracks, ${audio.cues.size} cues"
+            }
+        }
+    }
+
+    /**
+     * Called with the page whose audio should currently be playing.
+     *
+     * Deliberately separate from [onPageSelected]: reading progress tracks the bottom-most
+     * visible page, but a source's audio cues are anchored to the image at the top of the
+     * viewport - which is how the site itself triggers them. On a tall webtoon strip those are
+     * over a page apart, and using the wrong one makes every cue fire early.
+     */
+    fun onBgmPageChanged(page: ReaderPage) {
+        lastBgmPage = page
+        logChapterAudio(page)
+        val enabled = readerPreferences.bgmEnabled().get()
+        val track = if (enabled) {
+            page.chapter.pages
+                ?.firstNotNullOfOrNull { it.chapterAudio }
+                ?.trackAt(page.index)
+        } else {
+            null
+        }
+        bgmPlayer.onPageChanged(track, getSource(), enabled, readerPreferences.bgmLoop().get())
+    }
+
     override fun onCleared() {
+        bgmPlayer.stop()
         val currentChapters = state.value.viewerChapters
         if (currentChapters != null) {
             currentChapters.unref()
@@ -677,6 +732,12 @@ class ReaderViewModel @JvmOverloads constructor(
         // InsertPage doesn't change page progress
         if (page is InsertPage) {
             return
+        }
+
+        // The webtoon viewer drives bgm itself, from the top of the viewport rather than the
+        // bottom-most visible page this callback reports. See onBgmPageChanged.
+        if (state.value.viewer !is WebtoonViewer) {
+            onBgmPageChanged(page)
         }
 
         // SY -->

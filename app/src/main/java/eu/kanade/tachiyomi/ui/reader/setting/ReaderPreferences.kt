@@ -178,6 +178,18 @@ class ReaderPreferences(
 
     fun aggressivePageLoading() = preferenceStore.getBoolean("eh_aggressive_page_loading", false)
 
+    /** Play background music on sources that provide it. Off by default: unexpected audio in a
+     *  reader is worse than missing audio. */
+    fun bgmEnabled() = preferenceStore.getBoolean("pref_bgm_enabled", false)
+
+    /**
+     * Repeat a track for as long as its pages are on screen.
+     *
+     * Off by default, matching the source site: a track is scored for a scene, not for however
+     * long the reader spends on it.
+     */
+    fun bgmLoop() = preferenceStore.getBoolean("pref_bgm_loop", false)
+
     fun cacheSize() = preferenceStore.getString("eh_cache_size", "75")
 
     fun autoscrollInterval() = preferenceStore.getFloat("eh_util_autoscroll_interval", 3f)

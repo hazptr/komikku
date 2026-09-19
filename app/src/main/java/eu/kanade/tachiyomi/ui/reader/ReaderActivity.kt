@@ -533,6 +533,8 @@ class ReaderActivity : BaseActivity() {
             viewModel.updateHistory()
         }
 
+        viewModel.bgmPlayer.pause()
+
         // AM (DISCORD) -->
         updateDiscordRPC(exitingReader = true)
         // <-- AM (DISCORD)
@@ -547,6 +549,7 @@ class ReaderActivity : BaseActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.restartReadTimer()
+        viewModel.bgmPlayer.resume()
 
         // AM (DISCORD) -->
         updateDiscordRPC(exitingReader = false)
@@ -1165,6 +1168,11 @@ class ReaderActivity : BaseActivity() {
         }
         // SY <--
         viewModel.onPageSelected(page, /* SY --> */ currentPageText, hasExtraPage /* SY <-- */)
+    }
+
+    /** Called from the viewer when the page that background music should follow changes. */
+    fun onBgmPageChanged(page: ReaderPage) {
+        viewModel.onBgmPageChanged(page)
     }
 
     /**

@@ -19,6 +19,26 @@ open class Page(
     val number: Int
         get() = index + 1
 
+    /**
+     * Audio the source provides for this chapter, carried on any one page of the list.
+     *
+     * A body property rather than a constructor parameter: adding a parameter would change the
+     * synthetic default-argument constructor signature and break every extension already
+     * compiled against the old one.
+     */
+    var chapterAudio: ChapterAudio? = null
+
+    /**
+     * Copies source-provided data that the constructor does not carry.
+     *
+     * Every place that rebuilds a page has to call this or the data is silently dropped, which
+     * has already happened once for each property added here. Keep the copying in one place so
+     * the next property only has to be handled once.
+     */
+    fun copySourceDataInto(target: Page) {
+        target.chapterAudio = chapterAudio
+    }
+
     @Transient
     private val _statusFlow = MutableStateFlow<State>(State.Queue)
 

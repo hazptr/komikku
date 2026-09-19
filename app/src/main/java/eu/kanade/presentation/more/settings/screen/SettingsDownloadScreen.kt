@@ -55,6 +55,11 @@ object SettingsDownloadScreen : SearchableSettings {
                 title = stringResource(MR.strings.split_tall_images),
                 subtitle = stringResource(MR.strings.split_tall_images_summary),
             ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = downloadPreferences.downloadBgm(),
+                title = stringResource(MR.strings.pref_download_bgm),
+                subtitle = stringResource(MR.strings.pref_download_bgm_summary),
+            ),
             Preference.PreferenceItem.SliderPreference(
                 value = parallelSourceLimit,
                 valueRange = 1..10,
