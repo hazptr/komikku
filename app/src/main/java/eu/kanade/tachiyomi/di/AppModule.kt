@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.data.BackupRestoreStatus
 import eu.kanade.tachiyomi.data.LibraryUpdateStatus
 import eu.kanade.tachiyomi.data.SyncStatus
+import eu.kanade.tachiyomi.data.cache.BgmCache
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.cache.PagePreviewCache
@@ -166,6 +167,7 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { UniFileTempFileManager(app) }
 
         addSingletonFactory { ChapterCache(app, get(), get()) }
+        addSingletonFactory { BgmCache(app) }
         addSingletonFactory { CoverCache(app) }
 
         addSingletonFactory { NetworkHelper(app, get()) }
