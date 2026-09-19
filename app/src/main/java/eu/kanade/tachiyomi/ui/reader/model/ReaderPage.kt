@@ -19,6 +19,9 @@ open class ReaderPage(
 
     open lateinit var chapter: ReaderChapter
 
+    /** Backing file name, when known. Lets offline loaders match bgm cues by name, not index. */
+    var name: String? = null
+
     /** Value to check if a page is too wide to be doubled up */
     var fullPage: Boolean = false
         set(value) {

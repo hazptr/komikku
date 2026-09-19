@@ -320,7 +320,23 @@ class WebtoonViewer(
         }
     }
 
+    /** Top-of-viewport page, tracked separately from [currentPage] for audio cues. */
+    private var currentBgmPage: ReaderPage? = null
+
     fun onScrolled(pos: Int? = null) {
+        // Source audio cues are anchored to the image at the top of the viewport, not the
+        // bottom-most visible one that drives reading progress. On a full-width strip those are
+        // more than a page apart, so using currentPage fires every cue early. Skipped entirely
+        // when the preference is off, so the scroll path costs nothing for readers who never
+        // turn it on.
+        if (config.bgmEnabled) {
+            val topItem = adapter.items.getOrNull(layoutManager.findFirstVisibleItemPosition())
+            if (topItem is ReaderPage && topItem != currentBgmPage) {
+                currentBgmPage = topItem
+                activity.onBgmPageChanged(topItem)
+            }
+        }
+
         val position = pos ?: layoutManager.findLastEndVisibleItemPosition()
         val item = adapter.items.getOrNull(position)
         val allowPreload = checkAllowPreload(item as? ReaderPage)

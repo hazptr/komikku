@@ -21,6 +21,7 @@ internal class DirectoryPageLoader(val file: UniFile) : PageLoader() {
                 val streamFn = { file.openInputStream() }
                 ReaderPage(i).apply {
                     stream = streamFn
+                    name = file.name
                     status = Page.State.Ready
                 }
             }

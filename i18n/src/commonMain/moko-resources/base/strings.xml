@@ -401,6 +401,9 @@
     <string name="pref_flash_style_white_black">White and Black</string>
     <string name="pref_double_tap_anim_speed">Double tap animation speed</string>
     <string name="pref_show_page_number">Show page number</string>
+    <string name="pref_bgm_enabled">Play background music</string>
+    <string name="pref_bgm_enabled_summary">For sources that provide it, such as Webtoons sound episodes</string>
+    <string name="pref_bgm_loop">Repeat background music</string>
     <string name="pref_show_reading_mode">Show reading mode</string>
     <string name="pref_show_reading_mode_summary">Briefly show current mode when reader is opened</string>
     <string name="pref_hardware_bitmap_threshold">Custom hardware bitmap threshold</string>
@@ -524,6 +527,8 @@
     <string name="save_chapter_as_cbz">Save as CBZ archive</string>
     <string name="split_tall_images">Split tall images</string>
     <string name="split_tall_images_summary">Improves reader performance</string>
+    <string name="pref_download_bgm">Download background music</string>
+    <string name="pref_download_bgm_summary">Store audio with downloaded chapters so it plays offline. Adds roughly a fifth to the size of a chapter that has it.</string>
     <string name="pref_download_concurrent_sources">Concurrent source downloads</string>
     <string name="pref_download_concurrent_pages">Concurrent page downloads</string>
     <string name="pref_download_concurrent_pages_summary">Pages downloaded simultaneously per source</string>

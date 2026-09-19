@@ -61,6 +61,19 @@ internal fun GeneralPage(screenModel: ReaderSettingsScreenModel) {
         pref = screenModel.preferences.showPageNumber(),
     )
 
+    val bgmEnabled by screenModel.preferences.bgmEnabled().collectAsState()
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_bgm_enabled),
+        pref = screenModel.preferences.bgmEnabled(),
+    )
+
+    if (bgmEnabled) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_bgm_loop),
+            pref = screenModel.preferences.bgmLoop(),
+        )
+    }
+
     // SY -->
     val forceHorizontalSeekbar by screenModel.preferences.forceHorizontalSeekbar().collectAsState()
     CheckboxItem(
