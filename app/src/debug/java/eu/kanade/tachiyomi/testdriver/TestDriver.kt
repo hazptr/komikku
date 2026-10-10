@@ -15,6 +15,7 @@ import android.view.KeyEvent
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.ui.platform.ViewRootForTest
 import cafe.adriel.voyager.navigator.Navigator
+import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
@@ -192,6 +193,7 @@ internal object TestDriver {
         "POST /prefs/source" -> putSourcePrefs(b)
         "GET /crashes" -> crashes(q["since"]?.toLongOrNull() ?: 0)
         "GET /net" -> net()
+        "GET /sources" -> sources(q["pkg"])
         else -> fail(404, "no route $method $path")
     }
 
@@ -649,6 +651,33 @@ internal object TestDriver {
         }
         if (!editor.commit()) fail(500, "commit failed")
         return sourcePrefs(id)
+    }
+
+    /** Installed extensions and their source ids; [pkg] filters by package name or its last segment. */
+    private fun sources(pkg: String?) = buildJsonArray {
+        Injekt.get<ExtensionManager>().installedExtensionsFlow.value
+            .filter { pkg == null || it.pkgName == pkg || it.pkgName.substringAfterLast('.') == pkg }
+            .forEach { ext ->
+                add(
+                    buildJsonObject {
+                        put("pkg", ext.pkgName)
+                        put("name", ext.name)
+                        put("versionName", ext.versionName)
+                        put("versionCode", ext.versionCode)
+                        putJsonArray("sources") {
+                            ext.sources.forEach { s ->
+                                add(
+                                    buildJsonObject {
+                                        put("id", s.id)
+                                        put("name", s.name)
+                                        put("lang", s.lang)
+                                    },
+                                )
+                            }
+                        }
+                    },
+                )
+            }
     }
 
     private fun net() = buildJsonObject {
