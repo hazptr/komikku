@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.testdriver
 
+import android.view.WindowManager
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
@@ -28,7 +29,11 @@ internal object Semantics {
         synchronized(roots) { roots += WeakReference(root) }
     }
 
-    /** Attached roots, the focused window first, then the most recently created. */
+    fun isDialog(root: ViewRootForTest): Boolean =
+        (root.view.rootView.layoutParams as? WindowManager.LayoutParams)?.type
+            ?.let { it != WindowManager.LayoutParams.TYPE_BASE_APPLICATION } ?: false
+
+    /** Attached roots, top window first: dialogs, sheets and popups above the activity, newest first. */
     fun attachedRoots(): List<ViewRootForTest> {
         val live = synchronized(roots) {
             roots.removeAll { it.get() == null }
@@ -37,7 +42,7 @@ internal object Semantics {
         return live
             .filter { it.view.isAttachedToWindow && it.view.isShown }
             .reversed()
-            .sortedByDescending { it.view.hasWindowFocus() }
+            .sortedByDescending { isDialog(it) }
     }
 
     class Found(val root: ViewRootForTest, val node: SemanticsNode, val rootIndex: Int)

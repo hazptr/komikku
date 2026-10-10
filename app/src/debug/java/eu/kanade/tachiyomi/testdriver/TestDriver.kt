@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
+import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.ui.platform.ViewRootForTest
 import cafe.adriel.voyager.navigator.Navigator
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -386,16 +387,39 @@ internal object TestDriver {
         }
     }
 
-    /** A BACK key press delivered to the focused window, so dialogs and sheets close before screens pop. */
+    /**
+     * A BACK key press delivered to the top window. With a dialog or sheet on top, waits until it is
+     * gone, falling back to its own back dispatcher if the key alone did not close it.
+     */
     private fun back(): JsonObject {
+        val top = onMain { Semantics.attachedRoots().firstOrNull() }
+        val dialog = top != null && onMain { Semantics.isDialog(top) }
         onMain {
-            val view = Semantics.attachedRoots().firstOrNull()?.view?.rootView
-                ?: (current() ?: fail(409, "no resumed activity")).window.decorView
+            val view = top?.view?.rootView ?: (current() ?: fail(409, "no resumed activity")).window.decorView
             val now = SystemClock.uptimeMillis()
             view.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
             view.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
         }
-        return buildJsonObject { put("ok", true) }
+        if (dialog) {
+            fun gone() = !onMain { top.view.isAttachedToWindow && top.view.isShown }
+            if (!waitUntil(2_000, ::gone)) {
+                onMain { top.view.findViewTreeOnBackPressedDispatcherOwner()?.onBackPressedDispatcher?.onBackPressed() }
+                if (!waitUntil(2_000, ::gone)) fail(409, "top window did not close on back")
+            }
+        }
+        return buildJsonObject {
+            put("ok", true)
+            put("closed", if (dialog) "window" else "screen")
+        }
+    }
+
+    private fun waitUntil(timeoutMs: Long, condition: () -> Boolean): Boolean {
+        val start = SystemClock.uptimeMillis()
+        while (SystemClock.uptimeMillis() - start < timeoutMs) {
+            if (condition()) return true
+            Thread.sleep(50)
+        }
+        return condition()
     }
 
     private fun waitForActivity(timeoutMs: Long, predicate: (Activity) -> Boolean): Activity {
