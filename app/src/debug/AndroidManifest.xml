@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!-- Test driver for automated device tests, debug builds only -->
+        <provider
+            android:name="eu.kanade.tachiyomi.testdriver.TestDriverProvider"
+            android:authorities="${applicationId}.testdriver"
+            android:exported="false" />
+    </application>
+
+</manifest>
