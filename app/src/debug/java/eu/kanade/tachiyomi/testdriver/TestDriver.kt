@@ -15,6 +15,8 @@ import android.view.KeyEvent
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.ui.platform.ViewRootForTest
 import cafe.adriel.voyager.navigator.Navigator
+import eu.kanade.domain.manga.interactor.UpdateManga
+import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.model.Page
@@ -47,6 +49,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.source.interactor.GetRemoteManga
 import uy.kohesive.injekt.Injekt
@@ -69,7 +72,7 @@ import kotlin.concurrent.thread
 internal object TestDriver {
 
     const val SOCKET_NAME = "komikku-testdriver"
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     private lateinit var app: Application
     private val main = Handler(Looper.getMainLooper())
@@ -194,6 +197,10 @@ internal object TestDriver {
         "GET /crashes" -> crashes(q["since"]?.toLongOrNull() ?: 0)
         "GET /net" -> net()
         "GET /sources" -> sources(q["pkg"])
+        "GET /library" -> library()
+        "POST /library/remove" -> removeFromLibrary(b)
+        "GET /downloads" -> downloads()
+        "POST /downloads/clear" -> clearDownloads()
         else -> fail(404, "no route $method $path")
     }
 
@@ -678,6 +685,57 @@ internal object TestDriver {
                     },
                 )
             }
+    }
+
+    private fun library() = runBlocking {
+        buildJsonArray {
+            Injekt.get<GetFavorites>().await().forEach { m ->
+                add(
+                    buildJsonObject {
+                        put("id", m.id)
+                        put("source", m.source)
+                        put("title", m.title)
+                    },
+                )
+            }
+        }
+    }
+
+    /** Removes library entries: [ids], everything from [source], or with all=true the whole library. Downloads stay. */
+    private fun removeFromLibrary(b: JsonObject) = runBlocking {
+        val ids = b["ids"]?.jsonArray?.map { it.jsonPrimitive.long }
+        val source = b.long("source")
+        if (ids == null && source == null && b.bool("all") != true) fail(400, "ids, source or all=true required")
+        val targets = Injekt.get<GetFavorites>().await()
+            .filter { m -> (ids == null || m.id in ids) && (source == null || m.source == source) }
+        val updateManga = Injekt.get<UpdateManga>()
+        targets.forEach { updateManga.awaitUpdateFavorite(it.id, false) }
+        buildJsonObject {
+            put("ok", true)
+            put("removed", targets.size)
+        }
+    }
+
+    private fun downloads() = buildJsonArray {
+        Injekt.get<DownloadManager>().queueState.value.forEach { d ->
+            add(
+                buildJsonObject {
+                    put("mangaId", d.manga.id)
+                    put("manga", d.manga.title)
+                    put("chapterId", d.chapter.id)
+                    put("chapter", d.chapter.name)
+                    put("status", d.status.name)
+                },
+            )
+        }
+    }
+
+    private fun clearDownloads() = buildJsonObject {
+        val manager = Injekt.get<DownloadManager>()
+        val count = manager.queueState.value.size
+        onMain { manager.clearQueue() }
+        put("ok", true)
+        put("cleared", count)
     }
 
     private fun net() = buildJsonObject {
