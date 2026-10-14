@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.database.Cursor
+import android.database.sqlite.SQLiteDatabase
 import android.net.LocalServerSocket
 import android.net.LocalSocket
 import android.net.Uri
@@ -72,7 +74,7 @@ import kotlin.concurrent.thread
 internal object TestDriver {
 
     const val SOCKET_NAME = "komikku-testdriver"
-    private const val VERSION = 2
+    private const val VERSION = 3
 
     private lateinit var app: Application
     private val main = Handler(Looper.getMainLooper())
@@ -199,6 +201,7 @@ internal object TestDriver {
         "GET /sources" -> sources(q["pkg"])
         "GET /library" -> library()
         "POST /library/remove" -> removeFromLibrary(b)
+        "POST /sql" -> sql(b)
         "GET /downloads" -> downloads()
         "POST /downloads/clear" -> clearDownloads()
         else -> fail(404, "no route $method $path")
@@ -697,6 +700,47 @@ internal object TestDriver {
                         put("title", m.title)
                     },
                 )
+            }
+        }
+    }
+
+    /** Runs a read-only query on the app database through its own connection; rows come back as arrays. */
+    private fun sql(b: JsonObject): JsonElement {
+        val query = b.str("sql") ?: fail(400, "sql required")
+        val args = b["args"]?.jsonArray?.map { it.jsonPrimitive.content }?.toTypedArray()
+        val limit = b.int("limit") ?: 1000
+        val path = app.getDatabasePath("tachiyomi.db").path
+        return SQLiteDatabase.openDatabase(path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            db.rawQuery(query, args).use { c ->
+                buildJsonObject {
+                    putJsonArray("columns") { c.columnNames.forEach { add(JsonPrimitive(it)) } }
+                    var truncated = false
+                    putJsonArray("rows") {
+                        var n = 0
+                        while (c.moveToNext()) {
+                            if (n++ >= limit) {
+                                truncated = true
+                                break
+                            }
+                            add(
+                                buildJsonArray {
+                                    for (i in 0 until c.columnCount) {
+                                        add(
+                                            when (c.getType(i)) {
+                                                Cursor.FIELD_TYPE_NULL -> JsonNull
+                                                Cursor.FIELD_TYPE_INTEGER -> JsonPrimitive(c.getLong(i))
+                                                Cursor.FIELD_TYPE_FLOAT -> JsonPrimitive(c.getDouble(i))
+                                                Cursor.FIELD_TYPE_BLOB -> JsonPrimitive(c.getBlob(i).decodeToString())
+                                                else -> JsonPrimitive(c.getString(i))
+                                            },
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    put("truncated", truncated)
+                }
             }
         }
     }
