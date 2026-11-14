@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.testdriver
 
 import android.view.WindowManager
 import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -155,6 +156,11 @@ internal object Semantics {
     }
 
     fun hasPendingLayout() = attachedRoots().any { it.hasPendingMeasureOrLayout }
+
+    /** An indeterminate progress indicator is on screen (a list or page still loading). */
+    fun isLoading(): Boolean = nodes(merged = false).any {
+        it.node.config.getOrNull(SemanticsProperties.ProgressBarRangeInfo) == ProgressBarRangeInfo.Indeterminate
+    }
 
     fun toJson(f: Found, depth: Int? = null): JsonObject = buildJsonObject {
         val n = f.node

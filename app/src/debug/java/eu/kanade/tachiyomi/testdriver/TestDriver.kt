@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
+import androidx.activity.ComponentActivity
 import androidx.activity.findViewTreeOnBackPressedDispatcherOwner
 import androidx.compose.ui.platform.ViewRootForTest
 import cafe.adriel.voyager.navigator.Navigator
@@ -326,16 +327,21 @@ internal object TestDriver {
         Injekt.get<NetworkHelper>().client.dispatcher.let { it.runningCallsCount() + it.queuedCallsCount() }
     }.getOrDefault(0)
 
-    /** Waits until the screen has not changed for [quietMs] and, if [network], no HTTP call is running. */
+    /**
+     * Waits until the screen has not changed for [quietMs] and, if [network], no HTTP call is running and no
+     * indeterminate progress indicator is shown (a response body can still be parsing after its call finished).
+     */
     private fun idle(quietMs: Long, timeoutMs: Long, network: Boolean = true): JsonObject {
         val start = SystemClock.uptimeMillis()
         var last = Int.MIN_VALUE
         var stableSince = start
         while (true) {
-            val (fp, pending) = onMain { Semantics.fingerprint() to Semantics.hasPendingLayout() }
+            val (fp, pending, loading) = onMain {
+                Triple(Semantics.fingerprint(), Semantics.hasPendingLayout(), network && Semantics.isLoading())
+            }
             val calls = if (network) runningCalls() else 0
             val now = SystemClock.uptimeMillis()
-            if (fp != last || pending || calls > 0) {
+            if (fp != last || pending || loading || calls > 0) {
                 last = fp
                 stableSince = now
             } else if (now - stableSince >= quietMs) {
@@ -344,7 +350,7 @@ internal object TestDriver {
                     put("waitedMs", now - start)
                 }
             }
-            if (now - start > timeoutMs) fail(408, "not idle after ${timeoutMs}ms (running HTTP calls: $calls)")
+            if (now - start > timeoutMs) fail(408, "not idle after ${timeoutMs}ms (running HTTP calls: $calls, loading: $loading)")
             Thread.sleep(50)
         }
     }
@@ -414,10 +420,16 @@ internal object TestDriver {
         val top = onMain { Semantics.attachedRoots().firstOrNull() }
         val dialog = top != null && onMain { Semantics.isDialog(top) }
         onMain {
-            val view = top?.view?.rootView ?: (current() ?: fail(409, "no resumed activity")).window.decorView
-            val now = SystemClock.uptimeMillis()
-            view.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
-            view.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+            val activity = current() ?: fail(409, "no resumed activity")
+            val view = top?.view?.rootView ?: activity.window.decorView
+            if (view === activity.window.decorView && activity is ComponentActivity) {
+                // With enableOnBackInvokedCallback (API 33+) a BACK key sent to the decor view never reaches onBackPressed
+                activity.onBackPressedDispatcher.onBackPressed()
+            } else {
+                val now = SystemClock.uptimeMillis()
+                view.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK, 0))
+                view.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK, 0))
+            }
         }
         if (dialog) {
             fun gone() = !onMain { top.view.isAttachedToWindow && top.view.isShown }
